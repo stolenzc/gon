@@ -1,9 +1,14 @@
 package gon
 
 import (
+	"math"
 	"net/http"
 	"sync"
 )
+
+// abortIndex 表示中止函数中使用的典型值，其值为 127
+// 会使用该值限制一个请求中的处理链函数的数量
+const abortIndex int8 = math.MaxInt8 >> 1
 
 // Context 用来存储请求上下文信息， 每个请求都会有一个独立的 Context 实例
 type Context struct {

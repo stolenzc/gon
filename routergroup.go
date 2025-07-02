@@ -1,6 +1,8 @@
 package gon
 
-import "net/http"
+import (
+	"net/http"
+)
 
 // anyMethods 定义了 Engine 默认支持的9颗路由树的路由方法名
 var anyMethods = []string{
@@ -45,13 +47,26 @@ type RouterGroup struct {
 	basePath string       // 路由组的基础路径，根路由组的 basePath 是 "/"
 	engine   *Engine      // 指向引擎实例
 	root     bool         // 是否是根路由组
-
 }
+
+// 确保 RouterGroup 实现了 IRouter 接口，防止后期改错，如果不满足，编译器会报错
+var _ IRouter = (*RouterGroup)(nil)
 
 // Use 用于给路由组添加中间件（处理函数链）
 func (group *RouterGroup) Use(middlewares ...HandlerFunc) IRoutes {
 	group.Handlers = append(group.Handlers, middlewares...)
 	return group.returnObj()
+}
+
+// Group 用来创建一个新的 RouterGroup ，该 RouterGroup 继承当前的 RouterGroup 的处理链和基础路径
+func (group *RouterGroup) Group(relativePath string, handlers ...HandlerFunc) *RouterGroup {
+	return &RouterGroup{
+		Handlers: group.combineHandlers(handlers),
+		basePath: group.calculateAbsolutePath(relativePath),
+		engine:   group.engine,
+		root:     false, // 新创建的路由组不是根路由组
+	}
+
 }
 
 // Handler 真实实现路由注册的逻辑，后续 GET、POST 等方法会调用该方法进行注册
@@ -103,6 +118,24 @@ func (group *RouterGroup) MATCH(methods []string, path string, handler HandlerFu
 		group.Handler(method, path, handler)
 	}
 	return group.returnObj()
+}
+
+// combineHandlers 用于合并当前路由组的处理链和传入的处理函数链，使用深拷贝返回一个新的函数处理链
+func (group *RouterGroup) combineHandlers(handlers HandlerChain) HandlerChain {
+	finalSize := len(group.Handlers) + len(handlers)
+	assert1(finalSize < int(abortIndex), "too many handlers")
+	mergedHandlers := make(HandlerChain, 0, finalSize)
+
+	// 深拷贝当前路由组的处理链和传入的处理函数链
+	copy(mergedHandlers, group.Handlers)
+	copy(mergedHandlers[len(group.Handlers):], handlers)
+	return mergedHandlers
+}
+
+// calculateAbsolutePath 用于计算绝对路由路径
+func (group *RouterGroup) calculateAbsolutePath(relativePath string) string {
+	return joinPaths(group.basePath, relativePath)
+
 }
 
 // returnObj 返回当前路由组的对象，如果是根路由组则返回引擎实例
