@@ -1,3 +1,3 @@
 package gon
 
-const Version = "0.0.1"
+const Version = "GIN.1.10.1"
