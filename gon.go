@@ -18,7 +18,8 @@ type Engine struct {
 	RouterGroup             // 路由组
 	pool        sync.Pool   // 用于存储 Context 对象的池，减少内存分配和垃圾回收的开销
 	trees       methodTrees // 存储不同 HTTP 方法的路由树
-	maxParams   uint16      // TODO maxParams 数据含义
+	maxParams   uint16      // maxParams 用来记录所注册的路由中，最多参数的路由中，参数的个数，主要用于分配 Context 的 Params 数组长度，用于节省内存，防止频繁 GC
+	maxSections uint16		// maxSections 用来记录所注册的路由中，路径最长的分段数量，路径分段是指路径中以 "/" 分割的部分
 }
 
 
@@ -72,4 +73,36 @@ func (engine *Engine) With(opts ...OptionFunc) *Engine {
 		opt(engine)
 	}
 	return engine
+}
+
+
+// addRoute 用于添加路由到 Engine 的路由树 trees 中
+func (engine *Engine) addRoute(method, path string, handlers HandlerChain) {
+	assert1(path[0] == '/', "path must begin with '/'")
+	assert1(method != "", "HTTP method can not be empty")
+	assert1(len(handlers) > 0, "there must be at least one handler")
+
+	// Debug mode print
+
+	// 获取对应的 HTTP 方法的路由压缩前缀树
+	root := engine.trees.get(method)
+
+	// 如果没有找到对应的路由树，说明该方法的路由树还未创建，则创建一个新的路由树
+	if root == nil {
+		root = new(node)
+		root.fullPath = path
+		engine.trees = append(engine.trees, methodTree{method: method, root: root})
+	}
+
+	root.addRoute(path, handlers) // 将路由添加到对应的路由树中
+
+	// 检查路径中参数的数量是否超出记录的最大参数数量
+	if paramsCount := countParams(path); paramsCount > engine.maxParams {
+		engine.maxParams = paramsCount // 更新最大参数数量
+	}
+
+	// 检查路径中分段的数量是否超出记录的最大分段数量
+	if sectionsCount := countSections(path); sectionsCount > engine.maxSections {
+		engine.maxSections = sectionsCount // 更新最大分段数量
+	}
 }
