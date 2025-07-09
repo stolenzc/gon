@@ -2,6 +2,7 @@ package gon
 
 import (
 	"bytes"
+	"strings"
 
 	"github.com/stolenzc/gon/internal/bytesconv"
 )
@@ -131,6 +132,122 @@ func findWildCard(path string) (wildcard string, n int, valid bool) {
 }
 
 // insertChild 用于在当前节点下插入一个子节点
+// 进入改方法时，n 本质上是一个 path 为空的 node，故某些条件下，可以直接操作 n 节点，不需要新建节点
 func (n *node) insertChild(path string, fullPath string, handlers HandlerChain) {
+	for {
+		// 查找通配符位置
+		wildcard, i, valid := findWildCard(path)
+		// 没有找到通配符，直接退出循环
+		if i < 0 {
+			break
+		}
 
+		// 通配符不合法，直接 panic
+		if !valid {
+			panic("only one wildcard per path segment is allowed, has: '" +
+				wildcard + "' in path '" + fullPath + "'")
+		}
+
+		// 如果存在通配符，那么至少有两个字符，一个通配符号 + 至少一个字符
+		if len(wildcard) < 2 {
+			panic("wildcards must be named with a non-empty name in path '" + fullPath + "'")
+		}
+
+		// 通配符为 : ，说明是一个参数节点
+		if wildcard[0] == ':' {
+			// i > 0 ，说明前面还有内容，修改path
+			if i > 0 {
+				n.path = path[:i]
+				path = path[i:]
+			}
+
+			// 新建一个参数节点，使用 wildcard 作为 path
+			child := &node{
+				nType:    param,
+				path:     wildcard,
+				fullPath: fullPath,
+			}
+
+			n.addChild(child)
+			n.wildChild = true // 标记当前节点包含通配符子节点，通配符子节点位于 children 的最后一个位置
+			n = child
+			n.priority++
+
+			// 如果通配符后面还有内容，将 path 的内容修改为参数后面的内容，然后新建一个 path 为空的节点，继续循环
+			if len(wildcard) < len(path) {
+				path = path[len(wildcard):]
+				child := &node{
+					priority: 1,
+					fullPath: fullPath,
+				}
+				n.addChild(child)
+				n = child
+				continue
+			}
+
+			// 否则，说明通配符是路径的最后一个节点，直接赋值 handlers
+			n.handlers = handlers
+			break
+		}
+
+		// 运行到此处，说明通配符是 *
+		// 检查 * 通配符是否是路径的最后一个节点
+		if i+len(wildcard) != len(path) {
+			panic("catch-all routes are only allowed at the end of the path in path '" + fullPath + "'")
+		}
+
+		// 节点的路径结尾是 "/", 说明后面还有内容，会导致路径冲突不合法
+		// 例如存在 /api/users/:id 后添加 /api/*filename
+		if len(n.path) > 0 && n.path[len(n.path)-1] == '/' {
+			pathSeg := ""
+			if len(n.children) != 0 {
+				pathSeg = strings.SplitN(n.children[0].path, "/", 2)[0]
+			}
+			panic("catch-all wildcard '" + path +
+				"' in new path '" + fullPath +
+				"' conflicts with existing path segment '" + pathSeg +
+				"' in existing prefix '" + n.path + pathSeg +
+				"'")
+		}
+
+		// 检查通配符前面的符号是否是 /
+		i--
+		if path[i] != '/' {
+			panic("no / before catch-all in path '" + fullPath + "'")
+		}
+
+		// 把当前的空节点的path设置为通配符前 / 前面的内容
+		n.path = path[:i]
+
+		// 新建两个节点，分别用来做通配符前面的 "/" + 通配符节点
+		// TODO 此处为什么需要一个 path 为空的节点
+		child := &node{
+			wildChild: true,
+			nType:     catchAll,
+			fullPath:  fullPath,
+		}
+
+		n.addChild(child)
+		n.indices = string('/')
+		n = child
+		n.priority++
+
+		// 通配符节点
+		child = &node{
+			path:     path[i:],
+			nType:    catchAll,
+			handlers: handlers,
+			priority: 1,
+			fullPath: fullPath,
+		}
+
+		n.children = []*node{child}
+
+		return
+	}
+
+	// 到此处，说明没有通配符，直接把内容赋值给当前节点
+	n.path = path
+	n.handlers = handlers
+	n.fullPath = fullPath
 }
